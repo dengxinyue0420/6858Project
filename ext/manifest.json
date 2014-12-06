@@ -1,0 +1,17 @@
+{
+	"manifest_version": 2,
+	"name": "CertMonitor Extension",
+	"version": "1.1",
+	"permissions": [
+		"https://*/*",
+		"contextMenus",
+		"tabs",
+		"webRequest",
+		"management",
+		"proxy"
+	],
+	"background": {
+	    "scripts": ["URI.js", "underscore-min.js", "background.js"],
+	    "persistent": true
+	}
+}
