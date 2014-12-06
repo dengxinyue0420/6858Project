@@ -1,0 +1,22 @@
+{
+	"manifest_version": 2,
+	"name": "CertMonitor Background App",
+	"version": "1.1",
+	"app": {
+	    "background": {
+	      "scripts": ["forge.min.js", "underscore-min.js", "restruct.js", "background.js"]
+	    }
+	},
+	"permissions": [
+		"storage",
+		"https://raw.githubusercontent.com/bagder/ca-bundle/master/ca-bundle.crt"
+	],
+	"sockets": {
+	    "tcp": {
+	      "connect": "*"
+	    },
+	    "udp": {
+	      "send": "*"
+	    }
+	}
+}
