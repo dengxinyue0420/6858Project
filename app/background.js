@@ -14,21 +14,13 @@ var getPOSIXTimestampUTC = function() {
 } 
 
 var getHostRecentCertificate = function (host, callback) {
-  chrome.storage.sync.get({'host': host}, function(items) {
-    if (items.length > 0)
-      callback(_.last(items))
-    callback(null);
-  });
+  chrome.storage.sync.get([host, ], callback);
 };
 
 var saveHostCertificateRecord = function(host, certChain, verification) {
   var stored = {};
-  chrome.storage.sync.set({'host': host}, function(items) {
-    if (items.length > 0)
-      callback(_.last(items))
-    callback(null);
-  });
-
+  stored[host] = certChain;
+  chrome.storage.sync.set(stored, function() {});
 };
 
 var createSocket = function(hostname, port, callback) {
@@ -40,12 +32,12 @@ var createSocket = function(hostname, port, callback) {
     var socketId = createInfo.socketId;
     chrome.sockets.tcp.connect(socketId, hostname, port, function(result) {
       if (result < 0) {
-        console.log("connect(" + socketProps.name + "): failed with code " + result);
+        // console.log("connect(" + socketProps.name + "): failed with code " + result);
         chrome.sockets.tcp.close(socketId);
         callback(null);
       }
       else {
-        console.log("connect(" + socketProps.name + "): socketId " + socketId);
+        // console.log("connect(" + socketProps.name + "): socketId " + socketId);
         callback(socketId);
       }
     });
@@ -57,12 +49,12 @@ var socketReadCallback = function(info) {
   var socketId = info.socketId;
   var data = info.data;
   if (socketReadCallbacksById[socketId]) {
-    console.log("read: " + data.byteLength + " bytes for socket " + socketId);
+    // console.log("read: " + data.byteLength + " bytes for socket " + socketId);
     socketReadCallbacksById[socketId](data);
   }
   else {
-    console.log("read: " + data.byteLength + " bytes for socket " + socketId +
-                "; no handler!");
+    // console.log("read: " + data.byteLength + " bytes for socket " + socketId +
+    //            "; no handler!");
   }
 };
 
@@ -177,7 +169,7 @@ var getHostCertificate = function(hostname, port, callback) {
               reader.header = tlsHeaderStruct.unpack(reader.buf.slice(0, tlsHeaderStruct.size));
               reader.buf = reader.buf.slice(tlsHeaderStruct.size, reader.buf.length);
               reader.state = "reader_message"
-              console.log("read_header: " + JSON.stringify(reader.header));
+              // console.log("read_header: " + JSON.stringify(reader.header));
             }
             else
               break;
@@ -186,18 +178,18 @@ var getHostCertificate = function(hostname, port, callback) {
             if (reader.buf.length > reader.header.length) {
               var message = reader.buf.slice(0, reader.header.length);
               if (reader.header.type == 0x15) { // ALERT
-                console.log("reader_message: alert");
+                // console.log("reader_message: alert");
               }
               else if (reader.header.type == 0x16) { // HANDSHAKE
                 var handshake = messageHeaderStruct.unpack(
                   message.slice(0, messageHeaderStruct.size));
-                console.log("reader_message: handshake: " + JSON.stringify(handshake));
+                // console.log("reader_message: handshake: " + JSON.stringify(handshake));
 
                 if (handshake.type == 0x0e) {
-                  console.log("reader_message: handshake: server hello done!")
+                  // console.log("reader_message: handshake: server hello done!")
                 }
                 else if (handshake.type == 0x0b) {
-                  console.log("reader_message: handshake: certificate")
+                  // console.log("reader_message: handshake: certificate")
                   var message = message.slice(messageHeaderStruct.size, message.length);
                   var certsLength = message[1] * 0x100 + message[2];
                   var message = message.slice(3, message.length);
@@ -245,6 +237,31 @@ var verifyCertChain = function(certChain, callback) {
   pki.verifyCertificateChain(window.caStore, certChain, callback);
 };
 
+var compareCertChain = function(host, previousCertChain, certChain) {
+  var anomaly = false;
+  if (previousCertChain[0].signature != certChain[0].signature) {
+    var anomaly = true;
+    console.info(host + ": Signature mismatch! " + previousCertChain[0].signature + "!=" + certChain[0].signature);
+  }
+  var issuerName = certChain[0].issuer.getField("CN").value;
+  if (previousCertChain[0].issuer.hash != certChain[0].issuer.hash) {
+     var anomaly = true;
+     console.info(host + ": Issuer mismatch! " + previousCertChain[0].issuer.hash + "!=" + certChain[0].issuer.hash);
+
+     var previousIssuerName = previousCertChain[0].issuer.getField("CN").value;
+     if (previousIssuerName != issuerName) {
+       console.info(host + ": Issuer changed from " + previousIssuerName + " to " + issuerName);
+     }
+  }
+  if (previousCertChain[0].subject.getField("CN").value != certChain[0].subject.getField("CN").value) {
+    console.info(host + ": Subject name changed from " + previousCertChain[0].subject.getField("CN").value +
+      " to " + certChain[0].subject.getField("CN").value);
+  }
+  if (! anomaly)
+    console.log(host + ": issued by " + issuerName + ", check ok.");
+}
+
+window.certs = {};
 chrome.runtime.onMessageExternal.addListener(
   function(request, sender, sendResponse) {
     var host = request.hostname + ":" + request.port;
@@ -253,8 +270,11 @@ chrome.runtime.onMessageExternal.addListener(
       console.log("getHostCertificate(" + host + "): " + "Done!");
       if (cert != null) {
         var certChain = parseHostCertificate(cert);
-        verifyCertChain(certChain, function(verified) {
-          saveHostCertificateRecord(host, certChain, getPOSIXTimestampUTC(), verified);
+        window.certs[host] = certChain;
+        getHostRecentCertificate(host, function(previousCert) {
+          saveHostCertificateRecord(host, cert, getPOSIXTimestampUTC(), false);
+          var previousCertChain = parseHostCertificate(previousCert);
+          var result = compareCertChain(host, previousCertChain, certChain);
         });
       }
     });
