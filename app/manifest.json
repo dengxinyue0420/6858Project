@@ -4,7 +4,7 @@
 	"version": "1.1",
 	"app": {
 	    "background": {
-	      "scripts": ["forge.min.js", "underscore-min.js", "restruct.js", "background.js"]
+	      "scripts": ["URI.js", "forge.min.js", "underscore-min.js", "restruct.js", "background.js"]
 	    }
 	},
 	"permissions": [
@@ -13,10 +13,10 @@
 	],
 	"sockets": {
 	    "tcp": {
-	      "connect": "*"
+	    	"connect": "*"
 	    },
-	    "udp": {
-	      "send": "*"
+	    "tcpServer": {
+	    	"listen": "127.0.0.1:*"
 	    }
 	}
 }
