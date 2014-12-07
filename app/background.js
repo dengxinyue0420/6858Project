@@ -14,13 +14,13 @@ var getPOSIXTimestampUTC = function() {
 } 
 
 var getHostRecentCertificate = function (host, callback) {
-  chrome.storage.sync.get([host, ], callback);
+  chrome.storage.local.get([host, ], callback);
 };
 
 var saveHostCertificateRecord = function(host, certChain, verification) {
   var stored = {};
   stored[host] = certChain;
-  chrome.storage.sync.set(stored, function() {});
+  chrome.storage.local.set(stored, function() {});
 };
 
 var createSocket = function(hostname, port, callback) {
@@ -239,6 +239,10 @@ var verifyCertChain = function(certChain, callback) {
 
 var compareCertChain = function(host, previousCertChain, certChain) {
   var anomaly = false;
+  if (previousCertChain === undefined) {
+    console.info(host + ": first time access.");
+    return;
+  }
   if (previousCertChain[0].signature != certChain[0].signature) {
     var anomaly = true;
     console.info(host + ": Signature mismatch! " + previousCertChain[0].signature + "!=" + certChain[0].signature);
