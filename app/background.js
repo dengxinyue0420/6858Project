@@ -14,14 +14,17 @@ var getPOSIXTimestampUTC = function() {
 } 
 
 var getHostRecentCertificate = function (host, callback) {
-  chrome.storage.sync.get([host, ], callback);
+  chrome.storage.local.get([host, ], callback);
 };
 
 var saveHostCertificateRecord = function(host, certChain, verification) {
   var stored = {};
   stored[host] = certChain;
-  chrome.storage.sync.set(stored, function() {});
+  chrome.storage.local.set(stored, function() {});
 };
+
+var hostnameValidationTimestamps = {};
+var hostnameValidationCallbacks = {};
 
 var createSocket = function(hostname, port, callback) {
   var socketProps = {
@@ -49,12 +52,11 @@ var socketReadCallback = function(info) {
   var socketId = info.socketId;
   var data = info.data;
   if (socketReadCallbacksById[socketId]) {
-    // console.log("read: " + data.byteLength + " bytes for socket " + socketId);
     socketReadCallbacksById[socketId](data);
   }
   else {
-    // console.log("read: " + data.byteLength + " bytes for socket " + socketId +
-    //            "; no handler!");
+    console.info("read: " + data.byteLength + " bytes for socket " + socketId +
+               "; no handler!");
   }
 };
 
@@ -239,6 +241,10 @@ var verifyCertChain = function(certChain, callback) {
 
 var compareCertChain = function(host, previousCertChain, certChain) {
   var anomaly = false;
+  if (previousCertChain === undefined || previousCertChain.length == 0) {
+    console.info(host + ": first time access.");
+    return !anomaly;
+  }
   if (previousCertChain[0].signature != certChain[0].signature) {
     var anomaly = true;
     console.info(host + ": Signature mismatch! " + previousCertChain[0].signature + "!=" + certChain[0].signature);
@@ -257,28 +263,63 @@ var compareCertChain = function(host, previousCertChain, certChain) {
     console.info(host + ": Subject name changed from " + previousCertChain[0].subject.getField("CN").value +
       " to " + certChain[0].subject.getField("CN").value);
   }
-  if (! anomaly)
+  if (! anomaly) {
     console.log(host + ": issued by " + issuerName + ", check ok.");
+  }
+  return (!anomaly);
+}
+
+var validateCertificate = function(hostname, port, callback) {
+  var host = hostname + ":" + port;
+  if (! _.has(hostnameValidationTimestamps, host) || 
+           (getPOSIXTimestampUTC - hostnameValidationTimestamps[host]) > 500) {
+    if (! _.has(hostnameValidationCallbacks, host) || hostnameValidationCallbacks[host].length == 0) {
+      hostnameValidationCallbacks[host] = [callback, ];
+      getHostCertificate(hostname, port, function(cert) {
+        console.log("getHostCertificate(" + host + "): " + "Done!");
+        if (cert != null) {
+          var certChain = parseHostCertificate(cert);
+          window.certs[host] = certChain;
+          getHostRecentCertificate(host, function(previousCert) {
+            var previousCertChain = parseHostCertificate(previousCert);
+            var validated = compareCertChain(host, previousCertChain, certChain);
+
+            if (validated) {
+              var message = null;
+              hostnameValidationTimestamps[host] = getPOSIXTimestampUTC();
+              saveHostCertificateRecord(host, cert, getPOSIXTimestampUTC(), false);
+            }
+            else {
+              var message = "Server certificate has changed from last visit.";
+            }
+            _.each(hostnameValidationCallbacks[host], function(c) {
+              c({"validation": validated, "message": message, "host": host});
+            });
+            hostnameValidationCallbacks[host] = [];
+          });
+        }
+        else {
+          _.each(hostnameValidationCallbacks[host], function(c) {
+            c({"host": host, "validation": false, "message": "Failed to obtain certificate."});
+          });
+          hostnameValidationCallbacks[host] = [];
+        }
+      });
+    }
+    else {
+      hostnameValidationCallbacks[host].push(callback);
+    }
+  }
+  else {
+    callback({"validation": true, "message": null, "host": host});
+  }
 }
 
 window.certs = {};
 chrome.runtime.onMessageExternal.addListener(
   function(request, sender, sendResponse) {
-    var host = request.hostname + ":" + request.port;
-    console.log("message: " + host);
-    getHostCertificate(request.hostname, request.port, function(cert) {
-      console.log("getHostCertificate(" + host + "): " + "Done!");
-      if (cert != null) {
-        var certChain = parseHostCertificate(cert);
-        window.certs[host] = certChain;
-        getHostRecentCertificate(host, function(previousCert) {
-          saveHostCertificateRecord(host, cert, getPOSIXTimestampUTC(), false);
-          var previousCertChain = parseHostCertificate(previousCert);
-          var result = compareCertChain(host, previousCertChain, certChain);
-        });
-      }
-    });
-    // sendResponse({"validation": true})
+    validateCertificate(request.hostname, request.port, sendResponse);
+    return true;
   }
 );
 
@@ -317,6 +358,78 @@ var loadCAStorage = function(bundle) {
   window.caStore = pki.createCaStore(certs);
   console.log("Loaded " + (certs.length) + " Certificate Authorities.");
 }
+
+var textToArrayBuffer = function(text) {
+  var binary = [];
+  var len = text.length;
+  for(var i = 0; i < len; ++i) {
+      binary[i] = text.charCodeAt(i);
+  }
+  return (new Uint8Array(binary).buffer);
+};
+
+chrome.sockets.tcpServer.onAccept.addListener(function(info) {
+  var socketId = info.clientSocketId;
+  var reader = {
+    "buf": "",
+    "parsed": false
+  };
+  registerReadCallback(socketId, function(data) {
+    var bytes = new Uint8Array(data);
+    reader.buf += String.fromCharCode.apply(String, bytes);
+    if (reader.parsed == false) {
+      var m = reader.buf.match(/^(GET)\s+([^\s]+)\s+(HTTP\/1\.[01])/);
+      if (m === undefined) {
+        console.error("Failed to parse: " + reader.buf);
+      }
+      var url = m[2].match(/^\/validate\?url=(.+)/);
+      if (url) {
+        var forbidden = m[3] + " 403 Forbidden\r\n\r\n";
+        var url = decodeURIComponent(url[1]);
+        var move = m[3] + " 302 Moved temporarily\r\n";
+        var move = move + "Date: " + (new Date()).toUTCString() + "\r\n";
+        var move = move + "Location: " + url + "\r\n";
+        var move = move + "Content-Length: 0\r\n";
+        var move = move + "Content-Type: text/plain\r\n" + "\r\n";
+        var wait_ts = getPOSIXTimestampUTC();
+        var uri = new URI(url);
+        var hostname = uri.hostname();
+        var port = parseInt(uri.port()) | 443;
+        var host = hostname + ":" + port;
+        validateCertificate(hostname, port, function(result) {
+          console.info("Validation=" + result.validation + " after " + (getPOSIXTimestampUTC() - wait_ts) + " seconds for " + url);
+          if (result.validation == true) {
+            chrome.sockets.tcp.send(socketId, textToArrayBuffer(move), function() {
+              closeSocket(socketId);
+            });
+          }
+          else {
+            chrome.sockets.tcp.send(socketId, textToArrayBuffer(forbidden), function() {
+              closeSocket(socketId);
+            });
+          }
+        });
+      }
+      else {
+        chrome.sockets.tcp.send(socketId, textToArrayBuffer(forbidden), function() {
+          closeSocket(socketId);
+        });
+      }
+    }
+  });
+  chrome.sockets.tcp.setPaused(socketId, false);
+});
+
+chrome.sockets.tcpServer.create({
+  "persistent": true
+}, function(info) {
+  var socketId = info.socketId;
+  chrome.sockets.tcpServer.listen(socketId, "127.0.0.1", 58271, function (r){
+    if (r < 0) {
+      console.error(chrome.runtime.lastError.message);
+    }
+  })
+});
 
 chrome.runtime.onInstalled.addListener(function(details) {
   chrome.storage.local.get(["ca-bundle", ], function(caBundle) {
