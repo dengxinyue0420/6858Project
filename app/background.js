@@ -24,6 +24,7 @@ var saveHostCertificateRecord = function(host, certChain, verification) {
 };
 
 var hostnameValidationTimestamps = {};
+var hostnameIssuers = {};
 var hostnameValidationCallbacks = {};
 
 var createSocket = function(hostname, port, callback) {
@@ -144,7 +145,7 @@ var constructTLSClientHello = function(hostname) {
 }
 
 var getHostCertificate = function(hostname, port, callback) {
-  var tlsTimeout = 30 * 1000;
+  var tlsTimeout = 5 * 1000;
 
   createSocket(hostname, port, function(socketId) {
     if (socketId != null) {
@@ -240,69 +241,71 @@ var verifyCertChain = function(certChain, callback) {
 };
 
 var compareCertChain = function(host, previousCertChain, certChain) {
-  var anomaly = false;
-  if (previousCertChain === undefined || previousCertChain.length == 0) {
-    console.info(host + ": first time access.");
-    return !anomaly;
-  }
-  if (previousCertChain[0].signature != certChain[0].signature) {
-    var anomaly = true;
-    console.info(host + ": Signature mismatch! " + previousCertChain[0].signature + "!=" + certChain[0].signature);
-  }
+  var message = "";
   var issuerName = certChain[0].issuer.getField("CN").value;
-  if (previousCertChain[0].issuer.hash != certChain[0].issuer.hash) {
-     var anomaly = true;
-     console.info(host + ": Issuer mismatch! " + previousCertChain[0].issuer.hash + "!=" + certChain[0].issuer.hash);
-
-     var previousIssuerName = previousCertChain[0].issuer.getField("CN").value;
-     if (previousIssuerName != issuerName) {
-       console.info(host + ": Issuer changed from " + previousIssuerName + " to " + issuerName);
-     }
+  if (previousCertChain === undefined || previousCertChain.length == 0) {
+    var message = "First Visit!";
+    console.info(host + ": " + message);
+    return {"validation": false, "message": message, "issuer": issuerName,
+            "save": true};
   }
   if (previousCertChain[0].subject.getField("CN").value != certChain[0].subject.getField("CN").value) {
-    console.info(host + ": Subject name changed from " + previousCertChain[0].subject.getField("CN").value +
-      " to " + certChain[0].subject.getField("CN").value);
+    var message = "Subject name changed from " + previousCertChain[0].subject.getField("CN").value +
+      " to " + certChain[0].subject.getField("CN").value;
+    console.info(host + ": " + message);
+    return {"validation": false, "message": message, "issuer": issuerName,
+            "save": false};
   }
-  if (! anomaly) {
-    console.log(host + ": issued by " + issuerName + ", check ok.");
+  if (previousCertChain[0].issuer.hash != certChain[0].issuer.hash) {
+     var previousIssuerName = previousCertChain[0].issuer.getField("CN").value;
+     if (previousIssuerName != issuerName) {
+        var message = "Issuer changed from " +  previousIssuerName + " to " + issuerName;
+        console.info(host + ": " + message);
+        return {"validation": false, "message": message, "issuer": issuerName,
+                "save": false};
+     }
   }
-  return (!anomaly);
+  console.log(host + ": issued by " + issuerName + ", check ok.");
+  return {"validation": true, "issuer": issuerName, "save": false};
 }
 
 var validateCertificate = function(hostname, port, callback) {
   var host = hostname + ":" + port;
   if (! _.has(hostnameValidationTimestamps, host) || 
-           (getPOSIXTimestampUTC - hostnameValidationTimestamps[host]) > 500) {
+           (getPOSIXTimestampUTC - hostnameValidationTimestamps[host]) > 30) {
     if (! _.has(hostnameValidationCallbacks, host) || hostnameValidationCallbacks[host].length == 0) {
       hostnameValidationCallbacks[host] = [callback, ];
       getHostCertificate(hostname, port, function(cert) {
         console.log("getHostCertificate(" + host + "): " + "Done!");
         if (cert != null) {
+          var xhr = new XMLHttpRequest();
+          xhr.onreadystatechange = handleStateChange; // Implemented elsewhere.
+          xhr.open("GET", chrome.extension.getURL('/config_resources/config.json'), true);
+          xhr.send();
+          
           var certChain = parseHostCertificate(cert);
           window.certs[host] = certChain;
           getHostRecentCertificate(host, function(previousCert) {
             var previousCertChain = parseHostCertificate(previousCert);
-            var validated = compareCertChain(host, previousCertChain, certChain);
+            var result = compareCertChain(host, previousCertChain, certChain);
 
-            if (validated) {
-              var message = null;
+            if (result.save) {
               hostnameValidationTimestamps[host] = getPOSIXTimestampUTC();
-              saveHostCertificateRecord(host, cert, getPOSIXTimestampUTC(), false);
+              hostnameIssuers[host] = result.issuer;
+              saveHostCertificateRecord(host, cert, hostnameValidationTimestamps[host], false);
             }
-            else {
-              var message = "Server certificate has changed from last visit.";
-            }
+            var message = result.message;
             _.each(hostnameValidationCallbacks[host], function(c) {
-              c({"validation": validated, "message": message, "host": host});
+              c({"validation": result.validation, "message": message, "host": host, "issuer": result.issuer});
             });
-            hostnameValidationCallbacks[host] = [];
+            delete hostnameValidationCallbacks[host];
           });
         }
         else {
           _.each(hostnameValidationCallbacks[host], function(c) {
-            c({"host": host, "validation": false, "message": "Failed to obtain certificate."});
+            c({"host": host, "validation": false, "message": "Failed to obtain certificate!"});
           });
-          hostnameValidationCallbacks[host] = [];
+          delete hostnameValidationCallbacks[host];
         }
       });
     }
@@ -311,7 +314,7 @@ var validateCertificate = function(hostname, port, callback) {
     }
   }
   else {
-    callback({"validation": true, "message": null, "host": host});
+    callback({"validation": true, "message": null, "host": host, "issuer": hostnameIssuers[host]});
   }
 }
 

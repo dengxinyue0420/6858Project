@@ -8,16 +8,16 @@
   <table class='table-hover table table-bordered' style="margin:50px; width:90%" align='center' id='CertTable'>
     <thead>
       <tr>
-        <th>Domain</th>
+        <th>Host</th>
         <th>Issuer</th>
-        <th>Signature</th>
+        <th>Fingerprint</th>
         <th>Valid Until</th>
       </tr>
     </thead>
     <tbody>
       {% for record in records %}
         <tr>
-          {% for i in [2,6,4,7] %}
+          {% for i in [0, 1, 2, 3] %}
             <td>{{ record[i] }}</td>
           {% endfor %}
         </tr>
