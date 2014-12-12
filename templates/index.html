@@ -12,12 +12,13 @@
         <th>Issuer</th>
         <th>Fingerprint</th>
         <th>Valid Until</th>
+        <th>Hits</th>
       </tr>
     </thead>
     <tbody>
       {% for record in records %}
         <tr>
-          {% for i in [0, 1, 2, 3] %}
+          {% for i in [0, 1, 2, 3, 4] %}
             <td>{{ record[i] }}</td>
           {% endfor %}
         </tr>

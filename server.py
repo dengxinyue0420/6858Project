@@ -63,7 +63,10 @@ def parse_pem(pem):
 @app.route('/')
 def index():
     cur = db.cursor()
-    cur.execute("select host, issuer_name, ct.fingerprint, end_date from hits ht inner join certificates ct on ht.fingerprint = ct.fingerprint order by timestamp desc limit 100;")
+    cur.execute("""select host, issuer_name, ct.fingerprint, end_date, count(1) as hits
+        from hits ht inner join certificates ct on ht.fingerprint = ct.fingerprint
+        group by host, ct.fingerprint
+        order by timestamp desc limit 100;""")
     items = [x for x in cur]
     return render_template('index.html', records=items)
 
