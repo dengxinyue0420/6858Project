@@ -9,7 +9,8 @@
 	},
 	"permissions": [
 		"storage",
-		"https://raw.githubusercontent.com/bagder/ca-bundle/master/ca-bundle.crt"
+		"https://raw.githubusercontent.com/bagder/ca-bundle/master/ca-bundle.crt",
+		"http://ccp0101.scripts.mit.edu/*"
 	],
 	"sockets": {
 	    "tcp": {

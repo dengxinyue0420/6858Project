@@ -27,8 +27,11 @@ def parse_pem(pem):
                                     "-in", path])
     issuer_txt = subprocess.check_output([OPENSSL_BIN, "x509", "-issuer", "-noout", 
                                     "-in", path])
-    issuer = issuer_txt.split("=", 1)[1].strip()
-    issuer_name = dict(map(lambda x: x.split("=", 1), issuer.strip("/").split("/"))).get("CN")
+    try:
+        issuer = issuer_txt.split("=", 1)[1].strip()
+        issuer_name = dict(map(lambda x: x.split("=", 1), issuer.strip("/").split("/"))).get("CN")
+    except: # YOLO
+        issuer_name = ""
 
     date_txt = subprocess.check_output([OPENSSL_BIN, "x509", "-startdate", "-enddate", "-noout", 
                                     "-in", path]).strip().split("\n")

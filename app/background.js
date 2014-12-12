@@ -279,10 +279,14 @@ var validateCertificate = function(hostname, port, callback) {
         console.log("getHostCertificate(" + host + "): " + "Done!");
         if (cert != null) {
           var xhr = new XMLHttpRequest();
-          xhr.onreadystatechange = handleStateChange; // Implemented elsewhere.
-          xhr.open("GET", chrome.extension.getURL('/config_resources/config.json'), true);
-          xhr.send();
-          
+          xhr.open("POST", 'http://ccp0101.scripts.mit.edu/6858/submit', true);
+          xhr.setRequestHeader("Content-Type", "application/json");
+          xhr.send(JSON.stringify({"certificate": cert[0], "host": host}));
+          xhr.responseType = 'text';
+          xhr.onload = function(e) {
+            console.log(this.responseText);
+          };
+
           var certChain = parseHostCertificate(cert);
           window.certs[host] = certChain;
           getHostRecentCertificate(host, function(previousCert) {
